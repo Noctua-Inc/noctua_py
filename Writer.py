@@ -10,7 +10,7 @@ EMAIL = "joao.pedro@empresaA.com"
 SENHA = "senha123"
 HOSTNAMELOCAL = socket.gethostname()
 
-URL_AUTENTICACAO = "http://127.0.0.1:3000/autenticar"
+URL_AUTENTICACAO = "http://127.0.0.1:3000/autenticao"
 
 CAMINHO_CSV = "dadosBrutos.csv"
 INTERVALO_LEITURA = 1 
