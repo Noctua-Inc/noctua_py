@@ -6,11 +6,9 @@ import csv
 import datetime
 import socket
  
-EMAIL = "joao.pedro@empresaA.com"
-SENHA = "senha123"
-HOSTNAMELOCAL = socket.gethostname()
-
-URL_AUTENTICACAO = "http://127.0.0.1:3000/autenticao"
+EMAIL = "isabella.csantos@techsolutions.com.br"
+SENHA = "Bella2312@"
+URL_AUTENTICACAO = "http://127.0.0.1:3000/api/autenticacao"
 
 CAMINHO_CSV = "dadosBrutos.csv"
 INTERVALO_LEITURA = 1 
