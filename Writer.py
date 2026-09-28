@@ -115,8 +115,8 @@ try:
         print("Falha na autenticação.")
 
 except requests.exceptions.HTTPError as erro:
-
-    print("Erro na autenticação:", erro)
+    print("Status:", erro.response.status_code)
+    print("Resposta da API:", erro.response.text)
 
 except requests.exceptions.RequestException as erro:
 
