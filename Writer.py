@@ -5,10 +5,14 @@ import time
 import csv
 import datetime
 import socket
- 
-EMAIL = "isabella.csantos@techsolutions.com.br"
-SENHA = "Bella2312@"
-HOSTNAMELOCAL = socket.gethostname
+from dotenv import load_dotenv
+
+load_dotenv()
+
+EMAIL = os.getenv("EMAIL_USER")
+SENHA = os.getenv("SENHA_USER")
+HOSTNAMELOCAL = socket.gethostname()
+print(HOSTNAMELOCAL)
 URL_AUTENTICACAO = "http://127.0.0.1:3000/api/autenticacao"
 
 CAMINHO_CSV = "dadosBrutos.csv"
@@ -117,6 +121,8 @@ try:
 except requests.exceptions.HTTPError as erro:
 
     print("Erro na autenticação:", erro)
+    print("Status ", erro.response.status_code)
+    print("Resposta API ", erro.response.text)
 
 except requests.exceptions.RequestException as erro:
 
