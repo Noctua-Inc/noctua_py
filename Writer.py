@@ -42,7 +42,7 @@ def leitura():
                              'Total_RAM', 
                              'Disponivel_RAM', 
                              'Porcentagem_Disco',
-                             'Disponiel_Disco', 
+                             'Disponivel_Disco', 
                              'Swap', 
                              'Load', 
                              'Timestamp'])
@@ -50,35 +50,35 @@ def leitura():
         while True:
 
             if flags_monitoramento.get("CPU", False):
-                cpuAtual = psutil.cpu_percent(interval=1)
+                cpu_atual = psutil.cpu_percent(interval=1)
                 cpu_frequencia_atual = round((psutil.cpu_freq().current), 2)
             else:
-                cpuAtual = 0
+                cpu_atual = 0
                 cpu_frequencia_atual = 0
 
             # RAM
             if flags_monitoramento.get("RAM", False):
-                ramAtual = psutil.virtual_memory().percent
+                ram_atual = psutil.virtual_memory().percent
                 memoria_ram_total = round((psutil.virtual_memory().total), 2)
                 memoria_ram_disponivel = round((psutil.virtual_memory().available), 2)
             else:
-                ramAtual = 0
+                ram_atual = 0
                 memoria_ram_total = 0
                 memoria_ram_disponivel = 0
 
             # DISCO
             if flags_monitoramento.get("DISCO", False):
-                discoAtual = psutil.disk_usage("/").percent
+                disco_atual = psutil.disk_usage("/").percent
                 disco_livre = round((psutil.disk_usage("/").free), 2)
             else:
-                discoAtual = 0
+                disco_atual = 0
                 disco_livre = 0
 
             # SWAP
             if flags_monitoramento.get("SWAP", False):
-                swapAtual = psutil.swap_memory().percent
+                swap_atual = psutil.swap_memory().percent
             else:
-                swapAtual = 0
+                swap_atual = 0
 
             # Cálculo de LOAD
             if flags_monitoramento.get("CPU", False):
@@ -89,14 +89,14 @@ def leitura():
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
  
             linha = [HOSTNAMELOCAL, 
-                    cpuAtual, 
+                    cpu_atual, 
                     cpu_frequencia_atual, 
-                    ramAtual, 
+                    ram_atual, 
                     memoria_ram_total, 
                     memoria_ram_disponivel, 
-                    discoAtual,
+                    disco_atual,
                     disco_livre,
-                    swapAtual, 
+                    swap_atual, 
                     round(loadAtual, 2), 
                     timestamp]
  
@@ -171,41 +171,3 @@ while autenticar:
     except requests.exceptions.RequestException as erro:
 
         print("Não foi possível conectar à API:", erro)
-
-# try:
-
-#     resposta = requests.post(
-#         URL_AUTENTICACAO,
-#         json={
-#             "email": EMAIL,
-#             "senha": SENHA,
-#             "hostname": HOSTNAMELOCAL
-#         }
-#     )
-#     resposta.raise_for_status()
-
-#     resultado = resposta.json()
-#     print(resultado)
-
-#     if resultado.get("autenticado"):
-
-#         print("Autenticação realizada com sucesso!")
-#         print("Hostname:", resultado["mainframe"]["hostname"])
-
-#         componentes = resultado["componentes"]
-
-#         autenticarComponentes(componentes)
-
-#         leitura()
-
-#     else:
-
-#         print("Falha na autenticação.")
-
-# except requests.exceptions.HTTPError as erro:
-#     print("Status:", erro.response.status_code)
-#     print("Resposta da API:", erro.response.text)
-
-# except requests.exceptions.RequestException as erro:
-
-#     print("Não foi possível conectar à API:", erro)
