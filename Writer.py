@@ -4,50 +4,70 @@ import os
 import time
 import csv
 import datetime
-import socket
+import uuid
 
 URL_AUTENTICACAO = "http://127.0.0.1:3000/api/autenticacao"
 
-INTERVALO_LEITURA = 1 
+INTERVALO_LEITURA = 1
 
 flags_monitoramento = {}
- 
-dados = []
 
 def autenticarComponentes(componentes):
     global flags_monitoramento
-    
 
     for comp in componentes:
         flags_monitoramento[comp["tipo"]] = True
-        
 
 def leitura():
     CAMINHO_CSV = HOSTNAMELOCAL + ".csv"
+    CAMINHO_PROCESSOS = HOSTNAMELOCAL + "_processos.csv"
 
     arquivo_novo = (
-        not os.path.exists(CAMINHO_CSV)) or os.path.getsize(CAMINHO_CSV) == 0
+        not os.path.exists(CAMINHO_CSV)
+        or os.path.getsize(CAMINHO_CSV) == 0
+    )
+    arquivo_processos_novo = (
+        not os.path.exists(CAMINHO_PROCESSOS)
+        or os.path.getsize(CAMINHO_PROCESSOS) == 0
+    )
 
-
- 
-    with open(CAMINHO_CSV, 'a', newline='', encoding='utf-8') as csvfile:
+    with open(CAMINHO_CSV, "a", newline="", encoding="utf-8") as csvfile, \
+            open(CAMINHO_PROCESSOS, "a", newline="", encoding="utf-8") as arquivo_processos:
         writer = csv.writer(csvfile)
- 
+        writer_processos = csv.writer(arquivo_processos)
+
         if arquivo_novo:
-            
-            writer.writerow(['HostName', 
-                             'Porcentagem_CPU', 
-                             'Freq_CPU',
-                             'Porcentagem_RAM', 
-                             'Total_RAM', 
-                             'Disponivel_RAM', 
-                             'Porcentagem_Disco',
-                             'Disponivel_Disco', 
-                             'Swap', 
-                             'Load', 
-                             'Timestamp'])
+            writer.writerow([
+                "Capture_ID",
+                "HostName",
+                "Porcentagem_CPU",
+                "Freq_CPU",
+                "Porcentagem_RAM",
+                "Total_RAM",
+                "Disponivel_RAM",
+                "Porcentagem_Disco",
+                "Disponivel_Disco",
+                "Swap",
+                "Load",
+                "Timestamp",
+            ])
+
+        if arquivo_processos_novo:
+            writer_processos.writerow([
+                "Capture_ID",
+                "HostName",
+                "Timestamp",
+                "PID",
+                "Nome_Processo",
+                "Porcentagem_CPU_Processo",
+                "Memoria_Bytes",
+                "Memoria_MB",
+                "Bytes_Lidos_Acumulados",
+                "Bytes_Escritos_Acumulados",
+            ])
 
         while True:
+            capture_id = str(uuid.uuid4())
 
             if flags_monitoramento.get("CPU", False):
                 cpu_atual = psutil.cpu_percent(interval=1)
@@ -85,34 +105,77 @@ def leitura():
                 loadAtual = (psutil.getloadavg()[0] / psutil.cpu_count()) * 100
             else:
                 loadAtual = 0
-    
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
- 
-            linha = [HOSTNAMELOCAL, 
-                    cpu_atual, 
-                    cpu_frequencia_atual, 
-                    ram_atual, 
-                    memoria_ram_total, 
-                    memoria_ram_disponivel, 
-                    disco_atual,
-                    disco_livre,
-                    swap_atual, 
-                    round(loadAtual, 2), 
-                    timestamp]
- 
-            dados.append(linha)
-            print(linha)
- 
+
+            timestamp = datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
+            linha = [
+                capture_id,
+                HOSTNAMELOCAL,
+                cpu_atual,
+                cpu_frequencia_atual,
+                ram_atual,
+                memoria_ram_total,
+                memoria_ram_disponivel,
+                disco_atual,
+                disco_livre,
+                swap_atual,
+                round(loadAtual, 2),
+                timestamp,
+            ]
+
             writer.writerow(linha)
             csvfile.flush()
- 
+
+            for processo in psutil.process_iter():
+                try:
+                    pid = processo.pid
+                    nome = processo.name()
+                    cpu_processo = processo.cpu_percent(interval=None)
+                    memoria_processo = processo.memory_info().rss
+
+                    try:
+                        io_processo = processo.io_counters()
+                        bytes_lidos = io_processo.read_bytes
+                        bytes_escritos = io_processo.write_bytes
+                    except (
+                        AttributeError,
+                        NotImplementedError,
+                        psutil.AccessDenied,
+                    ):
+                        bytes_lidos = ""
+                        bytes_escritos = ""
+
+                    writer_processos.writerow([
+                        capture_id,
+                        HOSTNAMELOCAL,
+                        timestamp,
+                        pid,
+                        nome,
+                        cpu_processo,
+                        memoria_processo,
+                        round(memoria_processo / (1024 ** 2), 2),
+                        bytes_lidos,
+                        bytes_escritos,
+                    ])
+
+                except (
+                    psutil.NoSuchProcess,
+                    psutil.AccessDenied,
+                    psutil.ZombieProcess,
+                ):
+                    continue
+
+            arquivo_processos.flush()
+            print(linha)
             time.sleep(INTERVALO_LEITURA)
- 
+
+
 autenticar = True
 
 while autenticar:
-
-    try: 
+    try:
         EMAIL = input("E-mail: ")
         SENHA = input("Senha: ")
 
@@ -130,18 +193,19 @@ while autenticar:
         print(resultado)
 
         if resultado.get("autenticado"):
-            mainframes = resultado['mainframe']
+            mainframes = resultado["mainframe"]
             print("Em qual servidor será a captura")
+
             i = 1
             for mf in mainframes:
-                print(f"{i} - {mf["hostname"]}")
+                print(f"{i} - {mf['hostname']}")
                 i += 1
 
             escolha = int(input("Servidor: "))
-
             HOSTNAMELOCAL = mainframes[escolha - 1]["hostname"]
         else:
             print("E-mail ou senha inválidas!")
+            continue
 
         resposta = requests.post(
             URL_AUTENTICACAO,
@@ -153,15 +217,12 @@ while autenticar:
         )
 
         resposta.raise_for_status()
-        
-        resultado = resposta.json()
 
+        resultado = resposta.json()
         componentes = resultado["componentes"]
 
         autenticarComponentes(componentes)
-
         leitura()
-
         autenticar = False
 
     except requests.exceptions.HTTPError as erro:
@@ -169,5 +230,4 @@ while autenticar:
         print("Resposta da API:", erro.response.text)
 
     except requests.exceptions.RequestException as erro:
-
         print("Não foi possível conectar à API:", erro)
