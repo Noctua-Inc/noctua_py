@@ -166,7 +166,7 @@ def leitura():
 
         contador_registros += 1
 
-        if contador_registros == 60:
+        if contador_registros == 10:
             timestamp_arquivo = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
             CAMINHO_CSV = f"{HOSTNAMELOCAL}_{timestamp_arquivo}.csv"
             CAMINHO_PROCESSOS = f"{HOSTNAMELOCAL}_processos_{timestamp_arquivo}.csv"
@@ -221,12 +221,12 @@ def leitura():
             s3_client.upload_file(
                 CAMINHO_CSV,
                 os.getenv("NOME_BUCKET"),
-                f"01-bronze/{CAMINHO_CSV}"
+                f"{nome_empresa}/01-bronze/{CAMINHO_CSV}"
             )
             s3_client.upload_file(
                 CAMINHO_PROCESSOS,
                 os.getenv("NOME_BUCKET"),
-                f"01-bronze/{CAMINHO_PROCESSOS}"
+                f"{nome_empresa}/01-bronze/{CAMINHO_PROCESSOS}"
             )
 
             os.remove(CAMINHO_CSV)
@@ -250,6 +250,25 @@ while autenticar:
         resposta.raise_for_status()
 
         resultado = resposta.json()
+
+        nome_empresa = resultado.get("empresa")['razao_social']
+        nome_empresa = str(nome_empresa).lower().replace(" ", "_")
+
+        bucket_existe = False
+
+        mostrar_prefixos = s3_client.list_objects_v2(Bucket=os.getenv("NOME_BUCKET"))
+        
+        for arquivo in mostrar_prefixos['Contents']:
+            if nome_empresa in arquivo:
+                bucket_existe = True
+                break
+
+        if(not bucket_existe):
+            prefixo_hierarquico = f'{nome_empresa}/01-bronze/'
+
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
+            )
 
         if resultado.get("autenticado"):
             mainframes = resultado["mainframe"]
