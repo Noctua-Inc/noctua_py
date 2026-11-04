@@ -166,7 +166,7 @@ def leitura():
 
         contador_registros += 1
 
-        if contador_registros == 10:
+        if contador_registros == 60:
             timestamp_arquivo = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
             CAMINHO_CSV = f"{HOSTNAMELOCAL}_{timestamp_arquivo}.csv"
             CAMINHO_PROCESSOS = f"{HOSTNAMELOCAL}_processos_{timestamp_arquivo}.csv"
