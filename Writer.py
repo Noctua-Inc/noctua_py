@@ -255,16 +255,60 @@ while autenticar:
         nome_empresa = str(nome_empresa).lower().replace(" ", "_")
 
         bucket_existe = False
+        bronze_existe = False
+        silver_existe = False
+        gold_existe = False
 
         mostrar_prefixos = s3_client.list_objects_v2(Bucket=os.getenv("NOME_BUCKET"))
         
         for arquivo in mostrar_prefixos['Contents']:
-            if nome_empresa in arquivo:
+            if nome_empresa in arquivo['Key']:
                 bucket_existe = True
                 break
 
+        
+        for arquivo in mostrar_prefixos['Contents']:
+            if "bronze" in arquivo['Key']:
+                bronze_existe = True
+                break
+
+        
+        for arquivo in mostrar_prefixos['Contents']:
+            if "silver" in arquivo['Key']:
+                silver_existe = True
+                break
+
+
+        for arquivo in mostrar_prefixos['Contents']:
+            if "gold" in arquivo['Key']:
+                gold_existe = True
+                break
+            
+
         if(not bucket_existe):
+            prefixo_hierarquico = f'{nome_empresa}/'
+
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
+            )
+
+        
+        if(not bronze_existe):
             prefixo_hierarquico = f'{nome_empresa}/01-bronze/'
+
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
+            )
+
+        if(not silver_existe):
+            prefixo_hierarquico = f'{nome_empresa}/02-silver/'
+
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
+            )
+
+        if(not gold_existe):
+            prefixo_hierarquico = f'{nome_empresa}/03-gold/'
 
             s3_client.put_object(
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
