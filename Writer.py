@@ -1,11 +1,12 @@
 import requests
 import psutil
 import os
-import time
 import csv
 import datetime
 import uuid
 import io, boto3
+import socket
+from getpass import getpass
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -18,17 +19,21 @@ session = boto3.Session(
 )
 s3_client = session.client("s3")
 
-URL_AUTENTICACAO = "http://127.0.0.1:3000/api/autenticacao"
+URL_AUTENTICACAO = os.getenv("URL_AUTENTICACAO")
 
-# INTERVALO_LEITURA = 1
+flags_monitoramento = {"CPU": True, "RAM": True, "DISCO": True, "SWAP": True, "REDE": True}
 
-flags_monitoramento = {}
 
-def autenticarComponentes(componentes):
-    global flags_monitoramento
+def autenticar_maquina():
+    resposta = requests.post(
+        URL_AUTENTICACAO,
+        json={"email": EMAIL, "senha": SENHA, "hostname": HOSTNAMELOCAL},
+        timeout=15
+    )
+    if not resposta.ok:
+        raise RuntimeError(resposta.json().get("mensagem", "Não foi possível autorizar a captura."))
+    return resposta.json()
 
-    for comp in componentes:
-        flags_monitoramento[comp["tipo"]] = True
 
 def leitura():
     contador_registros = 0
@@ -36,6 +41,9 @@ def leitura():
     buffer_processos = []
 
     while True:
+        if contador_registros == 0:
+            autenticar_maquina()
+
         capture_id = str(uuid.uuid4())
 
         if flags_monitoramento.get("CPU", False):
@@ -232,27 +240,19 @@ def leitura():
             os.remove(CAMINHO_CSV)
             os.remove(CAMINHO_PROCESSOS)
 
-autenticar = True
+if __name__ == "__main__":
+    if not URL_AUTENTICACAO:
+        raise SystemExit("Preencha URL_AUTENTICACAO no .env com o endereço da API do Noctua.")
 
-while autenticar:
+    HOSTNAMELOCAL = socket.gethostname()
+    print("Hostname detectado:", HOSTNAMELOCAL)
+    EMAIL = input("E-mail: ")
+    SENHA = getpass("Senha: ")
+
     try:
-        EMAIL = input("E-mail: ")
-        SENHA = input("Senha: ")
-
-        resposta = requests.post(
-            URL_AUTENTICACAO,
-            json={
-                "email": EMAIL,
-                "senha": SENHA
-            }
-        )
-
-        resposta.raise_for_status()
-
-        resultado = resposta.json()
-
-        nome_empresa = resultado.get("empresa")['razao_social']
-        nome_empresa = str(nome_empresa).lower().replace(" ", "_")
+        resultado = autenticar_maquina()
+        HOSTNAMELOCAL = resultado["mainframe"]["hostname"]
+        nome_empresa = resultado["empresa"]["razao_social"].lower().replace(" ", "_")
 
         bucket_existe = False
         bronze_existe = False
@@ -314,42 +314,9 @@ while autenticar:
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
             )
 
-        if resultado.get("autenticado"):
-            mainframes = resultado["mainframe"]
-            print("Em qual servidor será a captura")
-
-            i = 1
-            for mf in mainframes:
-                print(f"{i} - {mf['hostname']}")
-                i += 1
-
-            escolha = int(input("Servidor: "))
-            HOSTNAMELOCAL = mainframes[escolha - 1]["hostname"]
-        else:
-            print("E-mail ou senha inválidas!")
-            continue
-
-        resposta = requests.post(
-            URL_AUTENTICACAO,
-            json={
-                "email": EMAIL,
-                "senha": SENHA,
-                "hostname": HOSTNAMELOCAL
-            }
-        )
-
-        resposta.raise_for_status()
-
-        resultado = resposta.json()
-        componentes = resultado["componentes"]
-
-        autenticarComponentes(componentes)
+        print("Captura autorizada para:", HOSTNAMELOCAL)
         leitura()
-        autenticar = False
-
-    except requests.exceptions.HTTPError as erro:
-        print("Status:", erro.response.status_code)
-        print("Resposta da API:", erro.response.text)
-
-    except requests.exceptions.RequestException as erro:
-        print("Não foi possível conectar à API:", erro)
+    except (RuntimeError, requests.exceptions.RequestException) as erro:
+        print("Captura encerrada:", erro)
+    except KeyboardInterrupt:
+        print("\nCaptura encerrada pelo usuário.")
