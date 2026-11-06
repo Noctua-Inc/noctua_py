@@ -67,9 +67,13 @@ def leitura():
         if flags_monitoramento.get("DISCO", False):
             disco_atual = psutil.disk_usage("/").percent
             disco_livre = round((psutil.disk_usage("/").free), 2)
+            qtd_requisicao_escrita = psutil.disk_io_counters().write_count
+            qtd_requisicao_leitura = psutil.disk_io_counters().read_count
         else:
             disco_atual = 0
             disco_livre = 0
+            qtd_requisicao_escrita = 0
+            qtd_requisicao_leitura = 0
 
         # SWAP
         if flags_monitoramento.get("SWAP", False):
@@ -119,6 +123,8 @@ def leitura():
             memoria_ram_disponivel,
             disco_atual,
             disco_livre,
+            qtd_requisicao_escrita,
+            qtd_requisicao_leitura,
             swap_atual,
             round(loadAtual, 2),
             dados_enviados,
@@ -194,6 +200,8 @@ def leitura():
                     "Disponivel_RAM",
                     "Porcentagem_Disco",
                     "Disponivel_Disco",
+                    "Qtd_Requisicao_Escrita",
+                    "Qtd_Requisicao_Leitura",
                     "Swap",
                     "Load",
                     "Dados_Enviados",
