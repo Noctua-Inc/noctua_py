@@ -234,16 +234,18 @@ def leitura():
             buffer_processos.clear()
             contador_registros = 0
 
+            print(f"Enviando os CSVs do lote para {nome_empresa}/01-bronze/{HOSTNAMELOCAL}/...", flush=True)
             s3_client.upload_file(
                 CAMINHO_CSV,
                 os.getenv("NOME_BUCKET"),
-                f"{nome_empresa}/01-bronze/{CAMINHO_CSV}"
+                f"{nome_empresa}/01-bronze/{HOSTNAMELOCAL}/{CAMINHO_CSV}"
             )
             s3_client.upload_file(
                 CAMINHO_PROCESSOS,
                 os.getenv("NOME_BUCKET"),
-                f"{nome_empresa}/01-bronze/{CAMINHO_PROCESSOS}"
+                f"{nome_empresa}/01-bronze/{HOSTNAMELOCAL}/{CAMINHO_PROCESSOS}"
             )
+            print("Os dois CSVs chegaram ao S3.", flush=True)
 
             os.remove(CAMINHO_CSV)
             os.remove(CAMINHO_PROCESSOS)
