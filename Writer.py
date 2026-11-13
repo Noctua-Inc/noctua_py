@@ -269,27 +269,30 @@ if __name__ == "__main__":
         silver_existe = False
         gold_existe = False
 
-        mostrar_prefixos = s3_client.list_objects_v2(Bucket=os.getenv("NOME_BUCKET"))
+        mostrar_prefixos = s3_client.list_objects_v2(
+            Bucket=os.getenv("NOME_BUCKET"), Prefix=f'{nome_empresa}/'
+        )
+        arquivos = mostrar_prefixos.get("Contents", [])
         
-        for arquivo in mostrar_prefixos['Contents']:
+        for arquivo in arquivos:
             if nome_empresa in arquivo['Key']:
                 bucket_existe = True
                 break
 
         
-        for arquivo in mostrar_prefixos['Contents']:
+        for arquivo in arquivos:
             if "bronze" in arquivo['Key']:
                 bronze_existe = True
                 break
 
         
-        for arquivo in mostrar_prefixos['Contents']:
+        for arquivo in arquivos:
             if "silver" in arquivo['Key']:
                 silver_existe = True
                 break
 
 
-        for arquivo in mostrar_prefixos['Contents']:
+        for arquivo in arquivos:
             if "gold" in arquivo['Key']:
                 gold_existe = True
                 break
