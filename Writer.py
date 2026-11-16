@@ -6,6 +6,7 @@ import datetime
 import uuid
 import io, boto3
 import socket
+import time
 from getpass import getpass
 from dotenv import load_dotenv
 
@@ -35,10 +36,31 @@ def autenticar_maquina():
     return resposta.json()
 
 
+def calcular_taxas_disco(anterior, atual, intervalo):
+    if anterior is None or atual is None or intervalo <= 0:
+        return "", ""
+
+    bytes_lidos = atual.read_bytes - anterior.read_bytes
+    bytes_escritos = atual.write_bytes - anterior.write_bytes
+    if bytes_lidos < 0 or bytes_escritos < 0:
+        return "", ""
+
+    # Os contadores sao acumulados; a dashboard usa a taxa no intervalo em MiB/s.
+    return (
+        round(bytes_lidos / intervalo / (1024 ** 2), 6),
+        round(bytes_escritos / intervalo / (1024 ** 2), 6),
+    )
+
+
 def leitura():
     contador_registros = 0
     buffer_linhas = []
     buffer_processos = []
+    io_disco_anterior = None
+    instante_disco_anterior = None
+    if flags_monitoramento.get("DISCO", False):
+        io_disco_anterior = psutil.disk_io_counters()
+        instante_disco_anterior = time.monotonic()
 
     while True:
         if contador_registros == 0:
@@ -64,16 +86,38 @@ def leitura():
             memoria_ram_disponivel = 0
 
         # DISCO
+        bytes_lidos_disco = ""
+        bytes_escritos_disco = ""
+        leitura_disco_mib_s = ""
+        escrita_disco_mib_s = ""
         if flags_monitoramento.get("DISCO", False):
             disco_atual = psutil.disk_usage("/").percent
             disco_livre = round((psutil.disk_usage("/").free), 2)
-            qtd_requisicao_escrita = psutil.disk_io_counters().write_count
-            qtd_requisicao_leitura = psutil.disk_io_counters().read_count
+            io_disco_atual = psutil.disk_io_counters()
+            instante_disco_atual = time.monotonic()
+            qtd_requisicao_escrita = ""
+            qtd_requisicao_leitura = ""
+            if io_disco_atual is not None:
+                qtd_requisicao_escrita = io_disco_atual.write_count
+                qtd_requisicao_leitura = io_disco_atual.read_count
+                bytes_lidos_disco = io_disco_atual.read_bytes
+                bytes_escritos_disco = io_disco_atual.write_bytes
+                intervalo = (
+                    instante_disco_atual - instante_disco_anterior
+                    if instante_disco_anterior is not None else 0
+                )
+                leitura_disco_mib_s, escrita_disco_mib_s = calcular_taxas_disco(
+                    io_disco_anterior, io_disco_atual, intervalo
+                )
+            io_disco_anterior = io_disco_atual
+            instante_disco_anterior = instante_disco_atual
         else:
             disco_atual = 0
             disco_livre = 0
             qtd_requisicao_escrita = 0
             qtd_requisicao_leitura = 0
+            io_disco_anterior = None
+            instante_disco_anterior = None
 
         # SWAP
         if flags_monitoramento.get("SWAP", False):
@@ -131,7 +175,11 @@ def leitura():
             dados_recebidos,
             pacotes_perdido,
             sockets_tw, 
-            timestamp
+            timestamp,
+            bytes_lidos_disco,
+            bytes_escritos_disco,
+            leitura_disco_mib_s,
+            escrita_disco_mib_s,
         ]
 
         buffer_linhas.append(linha)
@@ -209,6 +257,10 @@ def leitura():
                     "Pacotes_Perdido",
                     "Sockets_Tw", 
                     "Timestamp",
+                    "Bytes_Lidos_Disco_Acumulados",
+                    "Bytes_Escritos_Disco_Acumulados",
+                    "Leitura_Disco_MiB_s",
+                    "Escrita_Disco_MiB_s",
                 ])
 
                 writer_processos.writerow([
