@@ -379,6 +379,16 @@ if __name__ == "__main__":
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
             )
 
+        prefixo_controle = f"{nome_empresa}/04-controle/{HOSTNAMELOCAL}/"
+        objetos_controle = s3_client.list_objects_v2(
+            Bucket=os.getenv("NOME_BUCKET"), Prefix=prefixo_controle, MaxKeys=1
+        )
+        
+        if not objetos_controle.get("Contents"):
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_controle, Body=io.BytesIO(b'')
+            )
+
         print("Captura autorizada para:", HOSTNAMELOCAL)
         leitura()
     except (RuntimeError, requests.exceptions.RequestException) as erro:
