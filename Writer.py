@@ -56,6 +56,7 @@ def leitura():
     contador_registros = 0
     buffer_linhas = []
     buffer_processos = []
+    cpus_logicas = psutil.cpu_count(logical=True)
     io_disco_anterior = None
     instante_disco_anterior = None
     if flags_monitoramento.get("DISCO", False):
@@ -214,6 +215,8 @@ def leitura():
                     round(memoria_processo / (1024 ** 2), 2),
                     bytes_lidos,
                     bytes_escritos,
+                    cpu_atual if flags_monitoramento.get("CPU", False) else "",
+                    cpus_logicas,
                 ])
 
             except (
@@ -274,6 +277,8 @@ def leitura():
                     "Memoria_MB",
                     "Bytes_Lidos_Acumulados",
                     "Bytes_Escritos_Acumulados",
+                    "Porcentagem_CPU_Global",
+                    "CPUs_Logicas",
                 ])
 
                 writer.writerows(buffer_linhas)
