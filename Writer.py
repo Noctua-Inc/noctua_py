@@ -4,10 +4,12 @@ import os
 import csv
 import datetime
 import uuid
+from hashlib import sha256
 import io, boto3
 import socket
 import time
 from getpass import getpass
+from urllib.parse import quote_plus, unquote_plus
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
 
@@ -38,80 +40,96 @@ def autenticar_maquina():
     return resposta.json()
 
 
+def eventos_cobertos(gatilho, arn, prefixo, sufixo):
+    if gatilho["LambdaFunctionArn"] != arn:
+        return ()
+    filtros = gatilho.get("Filter", {}).get("Key", {}).get("FilterRules", [])
+    valores = {filtro["Name"].lower(): unquote_plus(filtro["Value"]) for filtro in filtros}
+    if prefixo.startswith(valores.get("prefix", "")) and sufixo.endswith(valores.get("suffix", "")):
+        return gatilho["Events"]
+    return ()
+
+
 def criar_gatilhos_lambda():
-    nome_bucket = os.getenv("NOME_BUCKET")
-    nome_lambda_bronze = os.getenv("NOME_LAMBDA_BRONZE")
-    nome_lambda_silver = os.getenv("NOME_LAMBDA_SILVER")
+    bucket = os.getenv("NOME_BUCKET")
+    bronze = os.getenv("NOME_LAMBDA_BRONZE")
+    silver = os.getenv("NOME_LAMBDA_SILVER")
+    if not all((bucket, bronze, silver)):
+        raise RuntimeError("Preencha NOME_BUCKET, NOME_LAMBDA_BRONZE e NOME_LAMBDA_SILVER no .env.")
 
-    if not nome_lambda_bronze or not nome_lambda_silver:
-        raise SystemExit("Preencha NOME_LAMBDA_BRONZE e NOME_LAMBDA_SILVER no .env com os nomes das Lambdas.")
-
-    configuracao = s3_client.get_bucket_notification_configuration(Bucket=nome_bucket)
-
-    notificacao = {}
-    if "TopicConfigurations" in configuracao:
-        notificacao["TopicConfigurations"] = configuracao["TopicConfigurations"]
-    if "QueueConfigurations" in configuracao:
-        notificacao["QueueConfigurations"] = configuracao["QueueConfigurations"]
-    if "EventBridgeConfiguration" in configuracao:
-        notificacao["EventBridgeConfiguration"] = configuracao["EventBridgeConfiguration"]
-
-    gatilhos = list(configuracao.get("LambdaFunctionConfigurations", []))
-    ids = [gatilho.get("Id") for gatilho in gatilhos]
-
-    id_bronze = f"noctua-bronze-{nome_empresa}-{HOSTNAMELOCAL}"
-    id_silver = f"noctua-silver-{nome_empresa}-{HOSTNAMELOCAL}"
-
-    for nome_lambda, statement_id in (
-        (nome_lambda_bronze, "noctua-invoke-bronze"),
-        (nome_lambda_silver, "noctua-invoke-silver"),
+    configuracao = s3_client.get_bucket_notification_configuration(Bucket=bucket)
+    notificacao = {chave: valor for chave, valor in configuracao.items() if chave != "ResponseMetadata"}
+    gatilhos = list(notificacao.get("LambdaFunctionConfigurations", []))
+    arns = {
+        nome: lambda_client.get_function(FunctionName=nome)["Configuration"]["FunctionArn"]
+        for nome in dict.fromkeys((bronze, silver))
+    }
+    eventos_criacao = ("s3:ObjectCreated:Put", "s3:ObjectCreated:Post", "s3:ObjectCreated:Copy",
+                       "s3:ObjectCreated:CompleteMultipartUpload")
+    pendentes = []
+    for camada, arn, regras in (
+        ("01-bronze", arns[bronze], (("bronze", ".csv"),)),
+        ("02-silver", arns[silver], (("historico", "_historico.csv"), ("processos", "_silver.csv"))),
     ):
+        prefixo = f"{nome_empresa}/{camada}/{HOSTNAMELOCAL}/"
+        for tipo, sufixo in regras:
+            cobertos = {evento for g in gatilhos for evento in eventos_cobertos(g, arn, prefixo, sufixo)}
+            faltantes = [evento for evento in eventos_criacao if evento not in cobertos]
+            if "s3:ObjectCreated:*" in cobertos or not faltantes:
+                continue
+            eventos = ["s3:ObjectCreated:*"] if len(faltantes) == len(eventos_criacao) else faltantes
+            chave = sha256(f"{arn}|{prefixo}|{sufixo}|{','.join(eventos)}".encode()).hexdigest()[:16]
+            pendentes.append({
+                "Id": f"noctua-{tipo}-{chave}",
+                "LambdaFunctionArn": arn,
+                "Events": eventos,
+                "Filter": {"Key": {"FilterRules": [
+                    {"Name": "prefix", "Value": quote_plus(prefixo, safe="/")},
+                    {"Name": "suffix", "Value": sufixo},
+                ]}},
+            })
+
+    if not pendentes:
+        print("Os gatilhos de captura já estão configurados.", flush=True)
+        return
+
+    identificador_bucket = sha256(bucket.encode()).hexdigest()[:16]
+    for arn in dict.fromkeys(g["LambdaFunctionArn"] for g in pendentes):
+        particao = arn.split(":")[1]
         try:
             lambda_client.add_permission(
-                FunctionName=nome_lambda,
-                StatementId=statement_id,
+                FunctionName=arn,
+                StatementId=f"noctua-s3-{identificador_bucket}",
                 Action="lambda:InvokeFunction",
                 Principal="s3.amazonaws.com",
-                SourceArn=f"arn:aws:s3:::{nome_bucket}",
+                SourceArn=f"arn:{particao}:s3:::{bucket}",
             )
         except ClientError as erro:
             if erro.response["Error"]["Code"] != "ResourceConflictException":
                 raise
 
-    if id_bronze not in ids:
-        gatilhos.append({
-            "Id": id_bronze,
-            "LambdaFunctionArn": lambda_client.get_function(
-                FunctionName=nome_lambda_bronze
-            )["Configuration"]["FunctionArn"],
-            "Events": ["s3:ObjectCreated:*"],
-            "Filter": {"Key": {"FilterRules": [
-                {"Name": "prefix", "Value": f"{nome_empresa}/01-bronze/{HOSTNAMELOCAL}/"},
-                {"Name": "suffix", "Value": ".csv"},
-            ]}},
-        })
+    notificacao["LambdaFunctionConfigurations"] = gatilhos + pendentes
+    try:
+        s3_client.put_bucket_notification_configuration(Bucket=bucket, NotificationConfiguration=notificacao)
+    except ClientError as erro:
+        detalhe = erro.response["Error"]
+        if detalhe["Code"] != "InvalidArgument" or "Unable to validate" not in detalhe.get("Message", ""):
+            raise
+        destinos = ", ".join(
+            f"{regra.get('Id', 'sem ID')} → {regra[campo]}"
+            for grupo, campo in (
+                ("LambdaFunctionConfigurations", "LambdaFunctionArn"),
+                ("TopicConfigurations", "TopicArn"),
+                ("QueueConfigurations", "QueueArn"),
+            )
+            for regra in notificacao.get(grupo, [])
+        )
+        raise RuntimeError(
+            f"O S3 recusou a configuração do bucket {bucket} ao validar seus destinos. "
+            f"Verifique existência, região e permissão de cada destino: {destinos}"
+        ) from erro
 
-    if id_silver not in ids:
-        gatilhos.append({
-            "Id": id_silver,
-            "LambdaFunctionArn": lambda_client.get_function(
-                FunctionName=nome_lambda_silver
-            )["Configuration"]["FunctionArn"],
-            "Events": ["s3:ObjectCreated:*"],
-            "Filter": {"Key": {"FilterRules": [
-                {"Name": "prefix", "Value": f"{nome_empresa}/02-silver/{HOSTNAMELOCAL}/"},
-                {"Name": "suffix", "Value": ".csv"},
-            ]}},
-        })
-
-    notificacao["LambdaFunctionConfigurations"] = gatilhos
-
-    s3_client.put_bucket_notification_configuration(
-        Bucket=nome_bucket,
-        NotificationConfiguration=notificacao,
-    )
-
-    print("Gatilhos das duas Lambdas configurados.", flush=True)
+    print(f"{len(pendentes)} gatilho(s) de captura configurado(s).", flush=True)
 
 
 def calcular_taxas_disco(anterior, atual, intervalo):
