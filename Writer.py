@@ -9,6 +9,7 @@ import socket
 import time
 from getpass import getpass
 from dotenv import load_dotenv
+from botocore.exceptions import ClientError
 
 load_dotenv()
 
@@ -19,6 +20,7 @@ session = boto3.Session(
     region_name="us-east-1",
 )
 s3_client = session.client("s3")
+lambda_client = session.client("lambda")
 
 URL_AUTENTICACAO = os.getenv("URL_AUTENTICACAO")
 
@@ -34,6 +36,82 @@ def autenticar_maquina():
     if not resposta.ok:
         raise RuntimeError(resposta.json().get("mensagem", "Não foi possível autorizar a captura."))
     return resposta.json()
+
+
+def criar_gatilhos_lambda():
+    nome_bucket = os.getenv("NOME_BUCKET")
+    nome_lambda_bronze = os.getenv("NOME_LAMBDA_BRONZE")
+    nome_lambda_silver = os.getenv("NOME_LAMBDA_SILVER")
+
+    if not nome_lambda_bronze or not nome_lambda_silver:
+        raise SystemExit("Preencha NOME_LAMBDA_BRONZE e NOME_LAMBDA_SILVER no .env com os nomes das Lambdas.")
+
+    configuracao = s3_client.get_bucket_notification_configuration(Bucket=nome_bucket)
+
+    notificacao = {}
+    if "TopicConfigurations" in configuracao:
+        notificacao["TopicConfigurations"] = configuracao["TopicConfigurations"]
+    if "QueueConfigurations" in configuracao:
+        notificacao["QueueConfigurations"] = configuracao["QueueConfigurations"]
+    if "EventBridgeConfiguration" in configuracao:
+        notificacao["EventBridgeConfiguration"] = configuracao["EventBridgeConfiguration"]
+
+    gatilhos = list(configuracao.get("LambdaFunctionConfigurations", []))
+    ids = [gatilho.get("Id") for gatilho in gatilhos]
+
+    id_bronze = f"noctua-bronze-{nome_empresa}-{HOSTNAMELOCAL}"
+    id_silver = f"noctua-silver-{nome_empresa}-{HOSTNAMELOCAL}"
+
+    for nome_lambda, statement_id in (
+        (nome_lambda_bronze, "noctua-invoke-bronze"),
+        (nome_lambda_silver, "noctua-invoke-silver"),
+    ):
+        try:
+            lambda_client.add_permission(
+                FunctionName=nome_lambda,
+                StatementId=statement_id,
+                Action="lambda:InvokeFunction",
+                Principal="s3.amazonaws.com",
+                SourceArn=f"arn:aws:s3:::{nome_bucket}",
+            )
+        except ClientError as erro:
+            if erro.response["Error"]["Code"] != "ResourceConflictException":
+                raise
+
+    if id_bronze not in ids:
+        gatilhos.append({
+            "Id": id_bronze,
+            "LambdaFunctionArn": lambda_client.get_function(
+                FunctionName=nome_lambda_bronze
+            )["Configuration"]["FunctionArn"],
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {"Key": {"FilterRules": [
+                {"Name": "prefix", "Value": f"{nome_empresa}/01-bronze/{HOSTNAMELOCAL}/"},
+                {"Name": "suffix", "Value": ".csv"},
+            ]}},
+        })
+
+    if id_silver not in ids:
+        gatilhos.append({
+            "Id": id_silver,
+            "LambdaFunctionArn": lambda_client.get_function(
+                FunctionName=nome_lambda_silver
+            )["Configuration"]["FunctionArn"],
+            "Events": ["s3:ObjectCreated:*"],
+            "Filter": {"Key": {"FilterRules": [
+                {"Name": "prefix", "Value": f"{nome_empresa}/02-silver/{HOSTNAMELOCAL}/"},
+                {"Name": "suffix", "Value": ".csv"},
+            ]}},
+        })
+
+    notificacao["LambdaFunctionConfigurations"] = gatilhos
+
+    s3_client.put_bucket_notification_configuration(
+        Bucket=nome_bucket,
+        NotificationConfiguration=notificacao,
+    )
+
+    print("Gatilhos das duas Lambdas configurados.", flush=True)
 
 
 def calcular_taxas_disco(anterior, atual, intervalo):
@@ -370,6 +448,12 @@ if __name__ == "__main__":
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
             )
 
+        prefixo_bronze_hostname = f'{nome_empresa}/01-bronze/{HOSTNAMELOCAL}/'
+        if prefixo_bronze_hostname not in [arquivo['Key'] for arquivo in arquivos]:
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_bronze_hostname, Body=io.BytesIO(b'')
+            )
+
         if(not silver_existe):
             prefixo_hierarquico = f'{nome_empresa}/02-silver/'
 
@@ -377,11 +461,23 @@ if __name__ == "__main__":
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
             )
 
+        prefixo_silver_hostname = f'{nome_empresa}/02-silver/{HOSTNAMELOCAL}/'
+        if prefixo_silver_hostname not in [arquivo['Key'] for arquivo in arquivos]:
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_silver_hostname, Body=io.BytesIO(b'')
+            )
+
         if(not gold_existe):
             prefixo_hierarquico = f'{nome_empresa}/03-gold/'
 
             s3_client.put_object(
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_hierarquico, Body=io.BytesIO(b'')
+            )
+
+        prefixo_gold_hostname = f'{nome_empresa}/03-gold/{HOSTNAMELOCAL}/'
+        if prefixo_gold_hostname not in [arquivo['Key'] for arquivo in arquivos]:
+            s3_client.put_object(
+                Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_gold_hostname, Body=io.BytesIO(b'')
             )
 
         prefixo_controle = f"{nome_empresa}/04-controle/{HOSTNAMELOCAL}/"
@@ -394,9 +490,11 @@ if __name__ == "__main__":
                 Bucket=os.getenv("NOME_BUCKET"), Key=prefixo_controle, Body=io.BytesIO(b'')
             )
 
+        criar_gatilhos_lambda()
+
         print("Captura autorizada para:", HOSTNAMELOCAL)
         leitura()
-    except (RuntimeError, requests.exceptions.RequestException) as erro:
+    except (RuntimeError, requests.exceptions.RequestException, ClientError) as erro:
         print("Captura encerrada:", erro)
     except KeyboardInterrupt:
         print("\nCaptura encerrada pelo usuário.")
