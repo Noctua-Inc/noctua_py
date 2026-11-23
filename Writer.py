@@ -13,7 +13,7 @@ from urllib.parse import quote_plus, unquote_plus
 from dotenv import load_dotenv
 from botocore.exceptions import ClientError
 
-load_dotenv(override=True)
+load_dotenv()
 
 session = boto3.Session(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -416,20 +416,8 @@ if __name__ == "__main__":
 
     try:
         resultado = autenticar_maquina()
-        try:
-            HOSTNAMELOCAL = resultado["mainframe"]["hostname"]
-            razao_social = resultado["empresa"]["razao_social"]
-        except (KeyError, TypeError):
-            raise RuntimeError(
-                "Resposta de autenticação inválida: empresa e hostname são obrigatórios."
-            ) from None
-
-        if not isinstance(razao_social, str) or not razao_social.strip():
-            raise RuntimeError(
-                "Resposta de autenticação inválida: razão social da empresa ausente."
-            )
-
-        nome_empresa = razao_social.lower().replace(" ", "_")
+        HOSTNAMELOCAL = resultado["mainframe"]["hostname"]
+        nome_empresa = resultado["empresa"]["razao_social"].lower().replace(" ", "_")
 
         bucket_existe = False
         bronze_existe = False
