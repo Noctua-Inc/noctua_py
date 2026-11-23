@@ -9,7 +9,7 @@ import socket
 from getpass import getpass
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 session = boto3.Session(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
@@ -48,10 +48,13 @@ def leitura():
 
         if flags_monitoramento.get("CPU", False):
             cpu_atual = psutil.cpu_percent(interval=1)
+            cpu_atual = max(0.0, min(100.0, round(float(cpu_atual), 2)))
             cpu_frequencia_atual = round((psutil.cpu_freq().current), 2)
+            cpu_logicos = psutil.cpu_count(logical=True) or 1
         else:
             cpu_atual = 0
             cpu_frequencia_atual = 0
+            cpu_logicos = 1
 
         # RAM
         if flags_monitoramento.get("RAM", False):
@@ -141,6 +144,7 @@ def leitura():
                 pid = processo.pid
                 nome = processo.name()
                 cpu_processo = processo.cpu_percent(interval=None)
+                cpu_processo = max(0.0, min(100.0, round(float(cpu_processo), 2)))
                 memoria_processo = processo.memory_info().rss
 
                 try:
@@ -166,6 +170,8 @@ def leitura():
                     round(memoria_processo / (1024 ** 2), 2),
                     bytes_lidos,
                     bytes_escritos,
+                    cpu_atual,
+                    cpu_logicos,
                 ])
 
             except (
@@ -222,6 +228,8 @@ def leitura():
                     "Memoria_MB",
                     "Bytes_Lidos_Acumulados",
                     "Bytes_Escritos_Acumulados",
+                    "CPU_Global_Percentual",
+                    "CPUs_Logicos",
                 ])
 
                 writer.writerows(buffer_linhas)
@@ -261,8 +269,20 @@ if __name__ == "__main__":
 
     try:
         resultado = autenticar_maquina()
-        HOSTNAMELOCAL = resultado["mainframe"]["hostname"]
-        nome_empresa = resultado["empresa"]["razao_social"].lower().replace(" ", "_")
+        try:
+            HOSTNAMELOCAL = resultado["mainframe"]["hostname"]
+            razao_social = resultado["empresa"]["razao_social"]
+        except (KeyError, TypeError):
+            raise RuntimeError(
+                "Resposta de autenticação inválida: empresa e hostname são obrigatórios."
+            ) from None
+
+        if not isinstance(razao_social, str) or not razao_social.strip():
+            raise RuntimeError(
+                "Resposta de autenticação inválida: razão social da empresa ausente."
+            )
+
+        nome_empresa = razao_social.lower().replace(" ", "_")
 
         bucket_existe = False
         bronze_existe = False
