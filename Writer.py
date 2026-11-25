@@ -27,6 +27,7 @@ lambda_client = session.client("lambda")
 URL_AUTENTICACAO = os.getenv("URL_AUTENTICACAO")
 
 flags_monitoramento = {"CPU": True, "RAM": True, "DISCO": True, "SWAP": True, "REDE": True}
+INTERVALO_AMOSTRA_CPU = 1.0
 
 
 def autenticar_maquina():
@@ -148,6 +149,75 @@ def calcular_taxas_disco(anterior, atual, intervalo):
     )
 
 
+def capturar_snapshot_cpu():
+    processos = {}
+
+    for processo in psutil.process_iter(attrs=["pid", "create_time", "cpu_times"]):
+        try:
+            dados = processo.info
+            tempos = dados.get("cpu_times")
+            segundos_cpu = None if tempos is None else tempos.user + tempos.system
+            chave = (dados["pid"], dados.get("create_time"))
+            processos[chave] = {
+                "segundos_cpu": segundos_cpu,
+                "instante": time.monotonic(),
+            }
+        except (
+            psutil.NoSuchProcess,
+            psutil.AccessDenied,
+            psutil.ZombieProcess,
+        ):
+            continue
+
+    tempos_cpu_sistema = psutil.cpu_times(percpu=True)
+    return tempos_cpu_sistema, processos
+
+
+def calcular_percentual_cpu_global(antes, depois):
+    total_decorrido = 0.0
+    ocioso_decorrido = 0.0
+
+    for cpu_antes, cpu_depois in zip(antes, depois):
+        campos = [campo for campo in cpu_antes._fields if campo not in {"guest", "guest_nice"}]
+        total_decorrido += sum(
+            getattr(cpu_depois, campo) - getattr(cpu_antes, campo)
+            for campo in campos
+        )
+        ocioso_decorrido += (
+            cpu_depois.idle - cpu_antes.idle
+            + getattr(cpu_depois, "iowait", 0.0) - getattr(cpu_antes, "iowait", 0.0)
+        )
+
+    if total_decorrido <= 0.0:
+        return 0.0
+
+    ocupado = max(0.0, total_decorrido - ocioso_decorrido)
+    percentual = (ocupado / total_decorrido) * 100.0
+    return max(0.0, min(100.0, round(percentual, 2)))
+
+
+def calcular_percentuais_cpu_processos(antes, depois):
+    percentuais = {}
+
+    for chave, amostra_depois in depois.items():
+        amostra_antes = antes.get(chave)
+        if (amostra_antes is None or amostra_antes["segundos_cpu"] is None
+                or amostra_depois["segundos_cpu"] is None):
+            percentuais[chave] = 0.0
+            continue
+
+        intervalo = amostra_depois["instante"] - amostra_antes["instante"]
+        delta_cpu = amostra_depois["segundos_cpu"] - amostra_antes["segundos_cpu"]
+        if intervalo <= 0.0 or delta_cpu < 0.0:
+            percentuais[chave] = 0.0
+            continue
+
+        percentual = (delta_cpu / intervalo) * 100.0
+        percentuais[chave] = max(0.0, min(100.0, round(float(percentual), 2)))
+
+    return percentuais
+
+
 def leitura():
     contador_registros = 0
     buffer_linhas = []
@@ -166,11 +236,19 @@ def leitura():
         capture_id = str(uuid.uuid4())
 
         if flags_monitoramento.get("CPU", False):
-            cpu_atual = psutil.cpu_percent(interval=1)
-            cpu_atual = max(0.0, min(100.0, round(float(cpu_atual), 2)))
+            tempos_cpu_antes, processos_cpu_antes = capturar_snapshot_cpu()
+            time.sleep(INTERVALO_AMOSTRA_CPU)
+            tempos_cpu_depois, processos_cpu_depois = capturar_snapshot_cpu()
+
+            cpu_atual = calcular_percentual_cpu_global(tempos_cpu_antes, tempos_cpu_depois)
+            percentuais_cpu_processos = calcular_percentuais_cpu_processos(
+                processos_cpu_antes,
+                processos_cpu_depois,
+            )
             cpu_frequencia_atual = round((psutil.cpu_freq().current), 2)
         else:
             cpu_atual = 0
+            percentuais_cpu_processos = {}
             cpu_frequencia_atual = 0
 
         # RAM
@@ -286,7 +364,14 @@ def leitura():
             try:
                 pid = processo.pid
                 nome = processo.name()
-                cpu_processo = processo.cpu_percent(interval=None)
+                if flags_monitoramento.get("CPU", False):
+                    try:
+                        chave_cpu = (pid, processo.create_time())
+                        cpu_processo = percentuais_cpu_processos.get(chave_cpu, 0.0)
+                    except psutil.AccessDenied:
+                        cpu_processo = 0.0
+                else:
+                    cpu_processo = processo.cpu_percent(interval=None)
                 cpu_processo = max(0.0, min(100.0, round(float(cpu_processo), 2)))
                 memoria_processo = processo.memory_info().rss
 
